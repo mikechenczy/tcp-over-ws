@@ -39,7 +39,7 @@ var (
 	listenPorts  = make(map[string]string)
 	wsAddr       string
 	wsAddrIp     string
-	wsAddrPort              = ""
+	wsAddrPort       = ""
 	msgType      int = websocket.BinaryMessage
 	isServer     bool
 	connMap      = make(map[string]*tcp2wsSparkle)
@@ -653,7 +653,7 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 
 func start(args []string) {
 	arg_num := len(args)
-	if arg_num < 3 {
+	if arg_num < 5 {
 		fmt.Println("Client: client ws://tcp2wsUrl server1 localPort\nServer: server false tcp2wsPort ip:port\nUse wss: server true server.crt server.key tcp2wsPort ip:port")
 		fmt.Println()
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
@@ -744,8 +744,8 @@ func start(args []string) {
 				go dnsPreferIpWithTtl(u.Hostname(), ttl)
 			}
 		}
-		for i := 3; i<arg_num; i+=2 {
-			serverPath := "/"+args[i]
+		for i := 3; i < arg_num; i += 2 {
+			serverPath := "/" + args[i]
 			listenPort := args[i+1]
 			match, _ := regexp.MatchString(`^\d+$`, listenPort)
 			listenHostPort := listenPort
@@ -763,7 +763,7 @@ func start(args []string) {
 			// 启动一个udp监听用于udp转发
 			go runClientUdp(listenHostPort, serverPath)
 
-			log.Print("Client Started " + listenHostPort + " -> " + wsAddr+serverPath)
+			log.Print("Client Started " + listenHostPort + " -> " + wsAddr + serverPath)
 		}
 	}
 	for {
@@ -801,6 +801,6 @@ func start(args []string) {
 	}
 }
 
-func main()  {
+func main() {
 	start(os.Args)
 }
