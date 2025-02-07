@@ -36,7 +36,7 @@ type tcp2wsSparkle struct {
 var (
 	//tcpAddr    string
 	tcpAddresses = make(map[string]string)
-	listenPorts  = make(map[string]string)
+	proxy        = ""
 	wsAddr       string
 	wsAddrIp     string
 	wsAddrPort       = ""
@@ -88,8 +88,13 @@ func deleteConn(uuid string) {
 
 func dialNewWs(uuid string, serverPath string) bool {
 	log.Print("dial ", uuid)
+	var httpProxy = http.ProxyFromEnvironment
+	if proxy != "auto" {
+		proxyUrl, _ := url.Parse(proxy)
+		httpProxy = http.ProxyURL(proxyUrl)
+	}
 	// call ws
-	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment, NetDial: meDial}
+	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: httpProxy, NetDial: meDial}
 	// println("tcpAddr ", tcpAddr, " wsAddr ", wsAddr, " wsAddrIp ", wsAddrIp, " wsAddrPort ", wsAddrPort)
 	wsConn, _, err := dialer.Dial(wsAddr+serverPath, nil)
 	if err != nil {
@@ -655,7 +660,7 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 func start(args []string) {
 	arg_num := len(args)
 	if arg_num < 5 || arg_num%2 != 0 {
-		fmt.Println("Client: client ws://tcp2wsUrl auto server1 localPort\nServer: server false tcp2wsPort ip:port\nUse wss: server true server.crt server.key tcp2wsPort ip:port")
+		fmt.Println("Client: ws://tcp2wsUrl auto none server1 localPort\nServer: server false tcp2wsPort ip:port\nUse wss: server true server.crt server.key tcp2wsPort ip:port")
 		fmt.Println()
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
@@ -712,7 +717,7 @@ func start(args []string) {
 		}
 		fmt.Println("/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\naccess_log off;\n}")
 	} else {
-		wsAddr = args[2]
+		wsAddr = args[1]
 		// 将ws服务端域名对应的ip缓存起来，避免多次请求dns或dns爆炸导致无法连接
 		u, err := url.Parse(wsAddr)
 		if err != nil {
@@ -735,7 +740,7 @@ func start(args []string) {
 			wsAddrIp = u.Hostname()
 			log.Print("tcping "+wsAddrIp+" ", tcping(wsAddrIp, wsAddrPort), "ms")
 		} else {
-			if args[3] == "auto" {
+			if args[2] == "auto" {
 				// 域名，需要解析，ip优选
 				var ttl uint32
 				wsAddrIp, ttl = dnsPreferIp(u.Hostname())
@@ -749,6 +754,7 @@ func start(args []string) {
 				wsAddrIp = args[3]
 			}
 		}
+		proxy = args[3]
 		for i := 4; i < arg_num; i += 2 {
 			serverPath := "/" + args[i]
 			listenPort := args[i+1]
