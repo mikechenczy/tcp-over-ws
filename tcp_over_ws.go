@@ -672,9 +672,9 @@ func start(args []string) {
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
 	}
+	isServer = args[1] == "server"
 	// 选择模式
 	if isServer {
-		isServer = args[1] == "server"
 		isSsl := args[2] == "true"
 		sslCrt := "server.crt"
 		sslKey := "server.key"
