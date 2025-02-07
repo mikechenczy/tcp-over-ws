@@ -36,7 +36,7 @@ type tcp2wsSparkle struct {
 var (
 	//tcpAddr    string
 	tcpAddresses = make(map[string]string)
-	proxy        = ""
+	proxy        string
 	wsAddr       string
 	wsAddrIp     string
 	wsAddrPort       = ""
@@ -90,8 +90,10 @@ func dialNewWs(uuid string, serverPath string) bool {
 	log.Print("dial ", uuid)
 	var httpProxy = http.ProxyFromEnvironment
 	if proxy != "auto" {
-		proxyUrl, _ := url.Parse(proxy)
-		httpProxy = http.ProxyURL(proxyUrl)
+		proxyUrl, err := url.Parse(proxy)
+		if err == nil {
+			httpProxy = http.ProxyURL(proxyUrl)
+		}
 	}
 	// call ws
 	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: httpProxy, NetDial: meDial}
@@ -665,18 +667,18 @@ func start(args []string) {
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
 	}
-	isServer = args[1] == "server"
-	isSsl := args[2] == "true"
-	sslCrt := "server.crt"
-	sslKey := "server.key"
-	offset := 0
-	if isSsl {
-		offset = 2
-		sslCrt = args[3]
-		sslKey = args[4]
-	}
 	// 选择模式
 	if isServer {
+		isServer = args[1] == "server"
+		isSsl := args[2] == "true"
+		sslCrt := "server.crt"
+		sslKey := "server.key"
+		offset := 0
+		if isSsl {
+			offset = 2
+			sslCrt = args[3]
+			sslKey = args[4]
+		}
 		listenPort := args[3+offset]
 		// ws server
 		http.HandleFunc("/", wsHandler)
@@ -751,7 +753,7 @@ func start(args []string) {
 					go dnsPreferIpWithTtl(u.Hostname(), ttl)
 				}
 			} else {
-				wsAddrIp = args[3]
+				wsAddrIp = args[2]
 			}
 		}
 		proxy = args[3]
