@@ -89,10 +89,15 @@ func deleteConn(uuid string) {
 func dialNewWs(uuid string, serverPath string) bool {
 	log.Print("dial ", uuid)
 	var httpProxy = http.ProxyFromEnvironment
-	if proxy != "auto" {
+	if proxy == "none" {
+		httpProxy = nil
+	} else if proxy != "auto" {
 		proxyUrl, err := url.Parse(proxy)
-		if err == nil {
+		if err != nil {
+			log.Print("parse proxy err:  ", err)
+		} else {
 			httpProxy = http.ProxyURL(proxyUrl)
+			log.Print("use proxy:  ", proxyUrl)
 		}
 	}
 	// call ws
