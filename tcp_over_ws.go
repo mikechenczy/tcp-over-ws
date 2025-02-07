@@ -479,13 +479,6 @@ func runClientUdp(listenHostPort string, serverPath string) {
 
 // 响应ws请求
 func wsHandler(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/")
-	target, exists := tcpAddresses[path]
-	if !exists {
-		http.Error(w, "Invalid path", http.StatusNotFound)
-		log.Println("Invalid WS path:", path)
-		return
-	}
 	forwarded := r.Header.Get("X-Forwarded-For")
 	// 不是ws的请求返回index.html 假装是一个静态服务器
 	if r.Header.Get("Upgrade") != "websocket" {
@@ -511,6 +504,14 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Print("ws upgrade err: ", err)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	target, exists := tcpAddresses[path]
+	if !exists {
+		http.Error(w, "Invalid path", http.StatusNotFound)
+		log.Println("Invalid WS path:", path)
 		return
 	}
 
@@ -653,8 +654,8 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 
 func start(args []string) {
 	arg_num := len(args)
-	if arg_num < 5 {
-		fmt.Println("Client: client ws://tcp2wsUrl server1 localPort\nServer: server false tcp2wsPort ip:port\nUse wss: server true server.crt server.key tcp2wsPort ip:port")
+	if arg_num < 5 || arg_num%2 != 0 {
+		fmt.Println("Client: client ws://tcp2wsUrl auto server1 localPort\nServer: server false tcp2wsPort ip:port\nUse wss: server true server.crt server.key tcp2wsPort ip:port")
 		fmt.Println()
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
@@ -734,17 +735,21 @@ func start(args []string) {
 			wsAddrIp = u.Hostname()
 			log.Print("tcping "+wsAddrIp+" ", tcping(wsAddrIp, wsAddrPort), "ms")
 		} else {
-			// 域名，需要解析，ip优选
-			var ttl uint32
-			wsAddrIp, ttl = dnsPreferIp(u.Hostname())
-			if wsAddrIp == "" {
-				log.Fatal("tcp2ws Client Start Error: dns resolve error")
-			} else if ttl > 0 {
-				// 根据dns ttl自动更新ip
-				go dnsPreferIpWithTtl(u.Hostname(), ttl)
+			if args[3] == "auto" {
+				// 域名，需要解析，ip优选
+				var ttl uint32
+				wsAddrIp, ttl = dnsPreferIp(u.Hostname())
+				if wsAddrIp == "" {
+					log.Fatal("tcp2ws Client Start Error: dns resolve error")
+				} else if ttl > 0 {
+					// 根据dns ttl自动更新ip
+					go dnsPreferIpWithTtl(u.Hostname(), ttl)
+				}
+			} else {
+				wsAddrIp = args[3]
 			}
 		}
-		for i := 3; i < arg_num; i += 2 {
+		for i := 4; i < arg_num; i += 2 {
 			serverPath := "/" + args[i]
 			listenPort := args[i+1]
 			match, _ := regexp.MatchString(`^\d+$`, listenPort)
