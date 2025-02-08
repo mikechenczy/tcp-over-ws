@@ -95,10 +95,10 @@ func dialNewWs(uuid string, serverPath string) bool {
 	} else if proxy != "auto" {
 		proxyUrl, err := url.Parse(proxy)
 		if err != nil {
-			log.Print("parse proxy err:  ", err)
+			log.Print("parse proxy err: ", err)
 		} else {
 			httpProxy = http.ProxyURL(proxyUrl)
-			log.Print("use proxy:  ", proxyUrl)
+			log.Print("use proxy: ", proxyUrl)
 		}
 	}
 	wsURL := wsAddr + serverPath
@@ -131,7 +131,7 @@ func dialNewWs(uuid string, serverPath string) bool {
 		// 解析新地址
 		newURL, err := url.Parse(newLocation)
 		if err != nil {
-			log.Println("解析新 URL 失败:", err)
+			log.Println("Parse URL failed: ", err)
 			return false
 		}
 
@@ -539,10 +539,9 @@ func runClientUdp(listenHostPort string, serverPath string) {
 // 反向代理处理函数
 func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 	// 解析目标地址
-	log.Print("target: ", target)
 	targetURL, err := url.Parse(target)
 	if err != nil {
-		log.Fatalf("无法解析目标URL: %v", err)
+		log.Fatalf("Failed to parse url: %v", err)
 	}
 
 	// 创建反向代理
@@ -551,7 +550,7 @@ func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 	// 自定义请求处理，去除路径前缀
 	proxy.Director = func(req *http.Request) {
 		// 打印调试信息：查看路径和目标地址
-		log.Printf("原始请求路径: %s", req.URL.Path)
+		//log.Printf("原始请求路径: %s", req.URL.Path)
 
 		// 确保请求 URL 的路径去掉前缀 `/test`
 		req.URL.Path = strings.TrimPrefix(req.URL.Path, pathPrefix)
@@ -560,7 +559,7 @@ func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 		req.URL.Scheme = targetURL.Scheme
 
 		// 打印调试信息：查看修改后的路径
-		log.Printf("修改后的请求路径: %s", req.URL.Path)
+		//log.Printf("修改后的请求路径: %s", req.URL.Path)
 	}
 
 	return proxy
@@ -569,7 +568,6 @@ func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 // 响应ws请求
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
-	log.Print("original: ", r.URL.Path)
 	if path != "" {
 		for k, v := range tcpAddresses {
 			firstPath := strings.Split(path, "/")[0]
