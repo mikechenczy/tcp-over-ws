@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -489,8 +490,51 @@ func runClientUdp(listenHostPort string, serverPath string) {
 
 }
 
+// 反向代理处理函数
+func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
+	// 解析目标地址
+	targetURL, err := url.Parse(target)
+	if err != nil {
+		log.Fatalf("Failed to parse url: %v", err)
+	}
+
+	// 创建反向代理
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+	// 自定义请求处理，去除路径前缀
+	proxy.Director = func(req *http.Request) {
+		// 打印调试信息：查看路径和目标地址
+		//log.Printf("原始请求路径: %s", req.URL.Path)
+
+		// 确保请求 URL 的路径去掉前缀 `/test`
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, pathPrefix)
+		req.URL.RawPath = req.URL.Path
+		req.URL.Host = targetURL.Host
+		req.URL.Scheme = targetURL.Scheme
+
+		// 打印调试信息：查看修改后的路径
+		//log.Printf("修改后的请求路径: %s", req.URL.Path)
+	}
+
+	return proxy
+}
+
 // 响应ws请求
 func wsHandler(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	for k, v := range tcpAddresses {
+		if !strings.Contains(path, "/") {
+			http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+			return
+		}
+		firstPath := strings.Split(path, "/")[0]
+		if firstPath == k && strings.HasPrefix(v, "rp:") {
+			//Reverse Proxy
+			targetUrl := v[3:]
+			newReverseProxy(targetUrl, "/"+firstPath).ServeHTTP(w, r)
+			return
+		}
+	}
 	forwarded := r.Header.Get("X-Forwarded-For")
 	// 不是ws的请求返回index.html 假装是一个静态服务器
 	if r.Header.Get("Upgrade") != "websocket" {
@@ -519,7 +563,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, "/")
 	target, exists := tcpAddresses[path]
 	if !exists {
 		http.Error(w, "Invalid path", http.StatusNotFound)
