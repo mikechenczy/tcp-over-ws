@@ -101,10 +101,56 @@ func dialNewWs(uuid string, serverPath string) bool {
 			log.Print("use proxy:  ", proxyUrl)
 		}
 	}
+	wsURL := wsAddr + serverPath
+	// 解析 URL
+	parsedURL, err := url.Parse(wsURL)
+	if err != nil {
+		log.Println("URL Parse err: ", err)
+		return false
+	}
+	// 创建 HTTP 客户端（支持重定向）
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// 先发送 HTTP 请求，检查是否重定向
+	resp, err := client.Head("http://" + parsedURL.Host + parsedURL.Path)
+	if err != nil {
+		log.Println("HTTP Head for redirect failed: ", err)
+	} else {
+		defer resp.Body.Close()
+	}
+
+	// 如果返回 301/302，获取新的 Location
+	if resp.StatusCode == http.StatusMovedPermanently || resp.StatusCode == http.StatusFound {
+		newLocation := resp.Header.Get("Location")
+		log.Println("Redirect to: ", newLocation)
+
+		// 解析新地址
+		newURL, err := url.Parse(newLocation)
+		if err != nil {
+			log.Println("解析新 URL 失败:", err)
+			return false
+		}
+
+		// 修改 ws/wss 前缀
+		if newURL.Scheme == "http" {
+			newURL.Scheme = "ws"
+		} else if newURL.Scheme == "https" {
+			newURL.Scheme = "wss"
+		}
+
+		// 更新连接地址
+		wsURL = newURL.String()
+		wsAddrIp = newURL.Hostname()
+		wsAddrPort = ":" + newURL.Port()
+	}
 	// call ws
 	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: httpProxy, NetDial: meDial}
 	// println("tcpAddr ", tcpAddr, " wsAddr ", wsAddr, " wsAddrIp ", wsAddrIp, " wsAddrPort ", wsAddrPort)
-	wsConn, _, err := dialer.Dial(wsAddr+serverPath, nil)
+	wsConn, _, err := dialer.Dial(wsURL, nil)
 	if err != nil {
 		log.Print("connect to ws err: ", err)
 		return false
@@ -493,9 +539,10 @@ func runClientUdp(listenHostPort string, serverPath string) {
 // 反向代理处理函数
 func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 	// 解析目标地址
+	log.Print("target: ", target)
 	targetURL, err := url.Parse(target)
 	if err != nil {
-		log.Fatalf("Failed to parse url: %v", err)
+		log.Fatalf("无法解析目标URL: %v", err)
 	}
 
 	// 创建反向代理
@@ -504,7 +551,7 @@ func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 	// 自定义请求处理，去除路径前缀
 	proxy.Director = func(req *http.Request) {
 		// 打印调试信息：查看路径和目标地址
-		//log.Printf("原始请求路径: %s", req.URL.Path)
+		log.Printf("原始请求路径: %s", req.URL.Path)
 
 		// 确保请求 URL 的路径去掉前缀 `/test`
 		req.URL.Path = strings.TrimPrefix(req.URL.Path, pathPrefix)
@@ -513,7 +560,7 @@ func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 		req.URL.Scheme = targetURL.Scheme
 
 		// 打印调试信息：查看修改后的路径
-		//log.Printf("修改后的请求路径: %s", req.URL.Path)
+		log.Printf("修改后的请求路径: %s", req.URL.Path)
 	}
 
 	return proxy
@@ -522,17 +569,20 @@ func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 // 响应ws请求
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
-	for k, v := range tcpAddresses {
-		if !strings.Contains(path, "/") {
-			http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
-			return
-		}
-		firstPath := strings.Split(path, "/")[0]
-		if firstPath == k && strings.HasPrefix(v, "rp:") {
-			//Reverse Proxy
-			targetUrl := v[3:]
-			newReverseProxy(targetUrl, "/"+firstPath).ServeHTTP(w, r)
-			return
+	log.Print("original: ", r.URL.Path)
+	if path != "" {
+		for k, v := range tcpAddresses {
+			firstPath := strings.Split(path, "/")[0]
+			if firstPath == k && strings.HasPrefix(v, "rp:") {
+				//Reverse Proxy
+				if !strings.Contains(path, "/") {
+					http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+					return
+				}
+				targetUrl := v[3:]
+				newReverseProxy(targetUrl, "/"+firstPath).ServeHTTP(w, r)
+				return
+			}
 		}
 	}
 	forwarded := r.Header.Get("X-Forwarded-For")
