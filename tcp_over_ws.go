@@ -581,6 +581,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				targetUrl := v[3:]
+				log.Print("reverse proxy to:  ", targetUrl+"/"+firstPath)
 				newReverseProxy(targetUrl, "/"+firstPath).ServeHTTP(w, r)
 				return
 			}
@@ -607,17 +608,17 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ws协议握手
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Print("ws upgrade err: ", err)
-		return
-	}
-
 	target, exists := tcpAddresses[path]
 	if !exists {
 		http.Error(w, "Invalid path", http.StatusNotFound)
 		log.Println("Invalid WS path:", path)
+		return
+	}
+
+	// ws协议握手
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Print("ws upgrade err: ", err)
 		return
 	}
 
@@ -761,6 +762,8 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 func start(args []string) {
 	arg_num := len(args)
 	if arg_num < 5 || arg_num%2 != 0 {
+		fmt.Println("Version: ", "1.2")
+		fmt.Println("")
 		fmt.Println("Usage:")
 		fmt.Println("Client: ws://addr auto(or ip/domain) none(or auto/your http proxy) server1 listenPort1 ...")
 		fmt.Println("Server: server false(true for ssl, need server.crt server.key) listenPort server1 ip:port(or just port for local) server2 rp:http://addr(rp: reverse proxy) ...")
