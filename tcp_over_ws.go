@@ -587,20 +587,24 @@ func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	if path != "" {
+		addrMapLock.RLock()
 		for k, v := range addrMap {
 			firstPath := strings.Split(path, "/")[0]
 			if firstPath == k && strings.HasPrefix(v, "rp:") {
 				//Reverse Proxy
 				if !strings.Contains(path, "/") {
 					http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+					addrMapLock.RUnlock()
 					return
 				}
 				targetUrl := v[3:]
 				log.Print("reverse proxy to:  ", targetUrl+"/"+firstPath)
 				newReverseProxy(targetUrl, "/"+firstPath).ServeHTTP(w, r)
+				addrMapLock.RUnlock()
 				return
 			}
 		}
+		addrMapLock.RUnlock()
 	}
 	forwarded := r.Header.Get("X-Forwarded-For")
 	// 不是ws的请求返回index.html 假装是一个静态服务器
@@ -777,7 +781,7 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 func start(args []string) {
 	arg_num := len(args)
 	if arg_num < 5 || arg_num%2 != 0 {
-		fmt.Println("Version: ", "1.3")
+		fmt.Println("Version: ", "1.4")
 		fmt.Println("")
 		fmt.Println("Usage:")
 		fmt.Println("Client: ws://addr auto(or ip/domain) none(or auto/your http proxy) server1 listenPort1 ...")
