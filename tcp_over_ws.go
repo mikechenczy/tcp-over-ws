@@ -36,16 +36,15 @@ type tcp2wsSparkle struct {
 
 var (
 	//tcpAddr    string
-	addrMap = make(map[string]string)
+	addrMap sync.Map
 	// 同样的原理：！！！go的map不是线程安全的 读写冲突就会直接exit！！！
-	addrMapLock = new(sync.RWMutex)
-	proxy       string
-	wsAddr      string
-	wsAddrIp    string
-	wsAddrPort      = ""
-	msgType     int = websocket.BinaryMessage
-	isServer    bool
-	connMap     = make(map[string]*tcp2wsSparkle)
+	proxy      string
+	wsAddr     string
+	wsAddrIp   string
+	wsAddrPort     = ""
+	msgType    int = websocket.BinaryMessage
+	isServer   bool
+	connMap    = make(map[string]*tcp2wsSparkle)
 	// go的map不是线程安全的 读写冲突就会直接exit
 	connMapLock = new(sync.RWMutex)
 )
@@ -90,16 +89,12 @@ func deleteConn(uuid string) {
 }
 
 func getAddr(uuid string) (string, bool) {
-	addrMapLock.RLock()
-	defer addrMapLock.RUnlock()
-	addr, haskey := addrMap[uuid]
-	return addr, haskey
+	addr, haskey := addrMap.Load(uuid)
+	return addr.(string), haskey
 }
 
 func setAddr(uuid string, addr string) {
-	addrMapLock.Lock()
-	defer addrMapLock.Unlock()
-	addrMap[uuid] = addr
+	addrMap.Store(uuid, addr)
 }
 
 func dialNewWs(uuid string, serverPath string) bool {
@@ -587,24 +582,31 @@ func newReverseProxy(target string, pathPrefix string) *httputil.ReverseProxy {
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	if path != "" {
-		addrMapLock.RLock()
-		for k, v := range addrMap {
-			firstPath := strings.Split(path, "/")[0]
-			if firstPath == k && strings.HasPrefix(v, "rp:") {
-				//Reverse Proxy
-				if !strings.Contains(path, "/") {
-					http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
-					addrMapLock.RUnlock()
-					return
+		firstPath := strings.Split(path, "/")[0]
+
+		needReturn := false
+		// 遍历 addrMap
+		addrMap.Range(func(k, v interface{}) bool {
+			if key, ok := k.(string); ok && key == firstPath {
+				if val, ok := v.(string); ok && strings.HasPrefix(val, "rp:") {
+					// Reverse Proxy
+					if !strings.Contains(path, "/") {
+						http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+						needReturn = true
+						return false // 提前结束遍历
+					}
+					targetUrl := val[3:]
+					log.Print("reverse proxy to:  ", targetUrl+"/"+firstPath)
+					newReverseProxy(targetUrl, "/"+firstPath).ServeHTTP(w, r)
+					needReturn = true
+					return false // 提前结束遍历
 				}
-				targetUrl := v[3:]
-				log.Print("reverse proxy to:  ", targetUrl+"/"+firstPath)
-				newReverseProxy(targetUrl, "/"+firstPath).ServeHTTP(w, r)
-				addrMapLock.RUnlock()
-				return
 			}
+			return true // 继续遍历
+		})
+		if needReturn {
+			return
 		}
-		addrMapLock.RUnlock()
 	}
 	forwarded := r.Header.Get("X-Forwarded-For")
 	// 不是ws的请求返回index.html 假装是一个静态服务器
@@ -830,14 +832,16 @@ func start(args []string) {
 		}
 		go startWsServer(listenHostPort, isSsl, sslCrt, sslKey)
 		if isSsl {
-			for _, v := range addrMap {
-				log.Print("Server Started wss://" + listenHostPort + " -> " + v)
-			}
+			addrMap.Range(func(k, v interface{}) bool {
+				log.Print("Server Started wss://" + listenHostPort + " -> " + v.(string))
+				return true
+			})
 			fmt.Print("Proxy with Nginx:\nlocation /" + uuid.New().String()[24:] + "/ {\nproxy_pass https://")
 		} else {
-			for _, v := range addrMap {
-				log.Print("Server Started ws://" + listenHostPort + " -> " + v)
-			}
+			addrMap.Range(func(k, v interface{}) bool {
+				log.Print("Server Started ws://" + listenHostPort + " -> " + v.(string))
+				return true
+			})
 			fmt.Print("Proxy with Nginx:\nlocation /" + uuid.New().String()[24:] + "/ {\nproxy_pass http://")
 		}
 		if match {
