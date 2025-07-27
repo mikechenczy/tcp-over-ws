@@ -35,14 +35,13 @@ type tcp2wsSparkle struct {
 }
 
 var (
-	//tcpAddr    string
-	addrMap sync.Map
-	// 同样的原理：！！！go的map不是线程安全的 读写冲突就会直接exit！！！
+	addrMap    sync.Map
+	pwdMap     sync.Map
 	proxy      string
 	wsAddr     string
 	wsAddrIp   string
-	wsAddrPort     = ""
-	msgType    int = websocket.BinaryMessage
+	wsAddrPort = ""
+	msgType    = websocket.BinaryMessage
 	isServer   bool
 	connMap    = make(map[string]*tcp2wsSparkle)
 	// go的map不是线程安全的 读写冲突就会直接exit
@@ -95,6 +94,15 @@ func getAddr(uuid string) (string, bool) {
 
 func setAddr(uuid string, addr string) {
 	addrMap.Store(uuid, addr)
+}
+
+func getPwd(uuid string) (string, bool) {
+	pwd, haskey := pwdMap.Load(uuid)
+	return pwd.(string), haskey
+}
+
+func setPwd(uuid string, pwd string) {
+	pwdMap.Store(uuid, pwd)
 }
 
 func dialNewWs(uuid string, serverPath string) bool {
@@ -165,8 +173,9 @@ func dialNewWs(uuid string, serverPath string) bool {
 		log.Print("connect to ws err: ", err)
 		return false
 	}
-	// send uuid
-	if err := wsConn.WriteMessage(websocket.TextMessage, []byte(uuid)); err != nil {
+	pwd, _ := getPwd(serverPath)
+	// send uuid and pwd
+	if err := wsConn.WriteMessage(websocket.TextMessage, []byte(uuid+pwd)); err != nil {
 		log.Print("udp send ws uuid err: ", err)
 		wsConn.Close()
 		return false
@@ -398,8 +407,22 @@ func meDial(network, address string) (net.Conn, error) {
 	return net.DialTimeout(network, wsAddrIp+wsAddrPort, 5*time.Second)
 }
 
+func safeHead(s string, n int) string {
+	if len(s) < n {
+		return ""
+	}
+	return s[:n]
+}
+
+func safeTail(s string, n int) string {
+	if len(s) < n {
+		return ""
+	}
+	return s[n:]
+}
+
 // 服务端 是tcp还是udp连接是客户端发过来的
-func runServer(wsConn *websocket.Conn, tcpAddr string) {
+func runServer(wsConn *websocket.Conn, tcpAddr string, path string) {
 	defer func() {
 		err := recover()
 		if err != nil {
@@ -411,7 +434,7 @@ func runServer(wsConn *websocket.Conn, tcpAddr string) {
 	var udpConn *net.UDPConn
 	var tcpConn net.Conn
 	var uuid string
-	// read uuid to get from connMap
+	// read uuid to get from connMap and read pwd
 	t, buf, err := wsConn.ReadMessage()
 	if err != nil || t == -1 || len(buf) == 0 {
 		log.Print("ws uuid read err: ", err)
@@ -419,7 +442,13 @@ func runServer(wsConn *websocket.Conn, tcpAddr string) {
 		return
 	}
 	if t == websocket.TextMessage {
-		uuid = string(buf)
+		pwd0, _ := getPwd(path)
+		pwd := safeTail(string(buf), 5)
+		uuid = safeHead(string(buf), 5)
+		if pwd0 != "1" && pwd != pwd0 {
+			log.Print("pwd wrong!")
+			return
+		}
 		if uuid == "" {
 			log.Print("ws uuid read empty")
 			return
@@ -644,7 +673,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 新线程hold住这条连接
-	go runServer(conn, target)
+	go runServer(conn, target, path)
 }
 
 // 响应tcp
@@ -783,16 +812,16 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 func start(args []string) {
 	arg_num := len(args)
 	if arg_num < 5 || arg_num%2 != 0 {
-		fmt.Println("Version: ", "1.4")
+		fmt.Println("Version: ", "1.5")
 		fmt.Println("")
 		fmt.Println("Usage:")
-		fmt.Println("Client: ws://addr auto(or ip/domain) none(or auto/your http proxy) server1 listenPort1 ...")
-		fmt.Println("Server: server false(true for ssl, need server.crt server.key) listenPort server1 ip:port(or just port for local) server2 rp:http://addr(rp: reverse proxy) ...")
+		fmt.Println("Client: ws://addr auto(or ip/domain) none(or auto/your http proxy) server1(or server1:SecretPassword) listenPort1 ...")
+		fmt.Println("Server: server false(true for ssl, need server.crt server.key) listenPort server1(or server1:SecretPassword) ip:port(or just port for local) server2 rp:http://addr(rp: reverse proxy) ...")
 		fmt.Println()
 		fmt.Println("e.g.:")
-		fmt.Println("Client: ws://addr auto none rd 3389")
-		fmt.Println("Server: server false 9000 rd 3389 website 80 rp rp:http://addr")
-		fmt.Println("Server uses wss: server true server.crt server.key 9000 rd 3389")
+		fmt.Println("Client: ws://addr auto none rd:SecretPassword 3389")
+		fmt.Println("Server: server false 9000 rd:SecretPassword 3389 website 80 rp rp:http://addr")
+		fmt.Println("Server uses wss: server true server.crt server.key 9000 rd:SecretPassword 3389")
 		fmt.Println()
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
@@ -828,7 +857,13 @@ func start(args []string) {
 			} else {
 				tcpAddr = serverUrl
 			}
-			setAddr(args[i], tcpAddr)
+			uuidPwd := strings.Split(args[i], ":")
+			if len(uuidPwd) != 1 {
+				setPwd(uuidPwd[0], uuidPwd[1])
+			} else {
+				setPwd(uuidPwd[0], "1")
+			}
+			setAddr(uuidPwd[0], tcpAddr)
 		}
 		go startWsServer(listenHostPort, isSsl, sslCrt, sslKey)
 		if isSsl {
@@ -890,7 +925,13 @@ func start(args []string) {
 		}
 		proxy = args[3]
 		for i := 4; i < arg_num; i += 2 {
-			serverPath := "/" + args[i]
+			uuidPwd := strings.Split(args[i], ":")
+			serverPath := "/" + uuidPwd[0]
+			if len(uuidPwd) != 1 {
+				setPwd(serverPath, uuidPwd[1])
+			} else {
+				setPwd(serverPath, "1")
+			}
 			listenPort := args[i+1]
 			match, _ := regexp.MatchString(`^\d+$`, listenPort)
 			listenHostPort := listenPort
