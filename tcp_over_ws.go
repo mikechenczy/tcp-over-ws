@@ -762,10 +762,21 @@ func dnsPreferIp(hostname string) (string, uint32) {
 	r, _, err := uc.Exchange(&m, systemDns+":53")
 	if err != nil {
 		// log.Print("Local DNS Fail: ", err)
-		r, _, err = tc.Exchange(&m, "208.67.222.222:5353")
+		r, _, err = tc.Exchange(&m, "1.1.1.1:53")
 		if err != nil {
 			log.Print("OpenDNS Fail: ", err)
 			return "", 0
+		}
+		// 处理响应
+		if r.Rcode != dns.RcodeSuccess {
+			log.Printf("DNS query failed with Rcode %d\n", r.Rcode)
+		}
+
+		// 打印 A 记录
+		for _, ans := range r.Answer {
+			if aRecord, ok := ans.(*dns.A); ok {
+				log.Printf("A record for %s: %s\n", hostname, aRecord.A.String())
+			}
 		}
 	} else {
 		log.Print("Use System DNS ", systemDns)
@@ -774,20 +785,27 @@ func dnsPreferIp(hostname string) (string, uint32) {
 		log.Print("Could not found NS records")
 		return "", 0
 	}
-
+	var availableIp []string
 	ip := ""
 	var ttl uint32 = 60
 	var lastPing int64 = 5000
 	for _, ans := range r.Answer {
 		if a, ok := ans.(*dns.A); ok {
-			nowPing := tcping(a.A.String(), wsAddrPort)
-			log.Print("tcping "+a.A.String()+" ", nowPing, "ms")
+			ipString := a.A.String()
+			if ipString != "" {
+				availableIp = append(availableIp, ipString)
+			}
+			nowPing := tcping(ipString, wsAddrPort)
+			log.Print("tcping "+ipString+" ", nowPing, "ms")
 			if nowPing != -1 && nowPing < lastPing {
 				ip = a.A.String()
 				ttl = ans.Header().Ttl
 				lastPing = nowPing
 			}
 		}
+	}
+	if ip == "" && len(availableIp) != 0 {
+		ip = availableIp[0]
 	}
 	log.Print("Prefer IP " + ip + " for " + hostname)
 	return ip, ttl
@@ -812,7 +830,7 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 func start(args []string) {
 	arg_num := len(args)
 	if arg_num < 5 || arg_num%2 != 0 {
-		fmt.Println("Version: ", "1.5")
+		fmt.Println("Version: ", "1.6")
 		fmt.Println("")
 		fmt.Println("Usage:")
 		fmt.Println("Client: ws://addr auto(or ip/domain) none(or auto/your http proxy) server1(or server1:SecretPassword) listenPort1 ...")
